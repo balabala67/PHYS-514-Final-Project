@@ -54,9 +54,12 @@ def sweep(out_csv: str = "results.csv", p: float = 0.05, seed: int = 1234):
     noises = ["identity", "depolarizing", "dephasing", "amp_damping"]
 
     rows = []
+    total = len(codes) * len(inits) * len(noises)
+    done = 0
     for code in codes:
         for init in inits:
             for noise in noises:
+                done += 1
                 fid = run_once(
                     code=code,
                     initial=init,
@@ -66,6 +69,7 @@ def sweep(out_csv: str = "results.csv", p: float = 0.05, seed: int = 1234):
                     seed=seed,
                     rand_state=rand_ab if init == "rand" else None,
                 )
+                print(f"[{done}/{total}] code={code:10s} init={init:4s} noise={noise:12s} p={p if noise!='identity' else 0.0:.3f} fidelity={fid:.4f}")
                 rows.append(
                     {
                         "code": code,
