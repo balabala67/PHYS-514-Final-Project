@@ -1,5 +1,6 @@
 # Ignore build artifacts and local-only data
 __pycache__/
+*/__pycache__/
 misc/
 generate_visuals.py
 
