@@ -8,7 +8,9 @@ from __future__ import annotations
 import math
 from typing import Dict, List, Tuple
 
+import numpy as np
 from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister
+from qiskit.circuit.library import Isometry
 from qiskit.quantum_info import Pauli, Statevector
 
 
@@ -112,70 +114,127 @@ def _encoder_bit_flip(data: QuantumRegister) -> QuantumCircuit:
 
 
 def _encoder_phase_flip(data: QuantumRegister) -> QuantumCircuit:
+    """
+    Phase-flip code: encode then Hadamard all qubits to map |000>/<111> -> |+++>/<---.
+    Protects against Z errors (stabilizers XXI, IXX).
+    """
     qc = QuantumCircuit(data, name="enc_phase_flip")
-    qc.h(data)
+    # bit-flip encode
     qc.cx(data[0], data[1])
     qc.cx(data[0], data[2])
+    # rotate to Hadamard basis
     qc.h(data)
     return qc
 
 
 def _encoder_five_qubit(data: QuantumRegister) -> QuantumCircuit:
     """
-    Standard encoder for the [[5,1,3]] perfect code mapping |ψ⟩ on data[0] to logical.
-    Source: Qiskit textbook-style construction for the 5-qubit code.
+    Canonical [[5,1,3]] perfect code via isometry from |0>,|1> to 5-qubit codewords
+    matching the standard real ±1/4 amplitudes.
     """
-    q = data
-    qc = QuantumCircuit(q, name="enc_five_qubit")
-    qc.h(q[1])
-    qc.h(q[2])
-    qc.h(q[3])
-    qc.h(q[4])
-    qc.cx(q[0], q[1])
-    qc.cx(q[0], q[2])
-    qc.cx(q[0], q[3])
-    qc.cx(q[0], q[4])
-    qc.z(q[0])
-    qc.cx(q[1], q[0])
-    qc.cx(q[2], q[0])
-    qc.cx(q[3], q[0])
-    qc.cx(q[4], q[0])
-    qc.h(q[0])
-    qc.s(q[1])
-    qc.s(q[2])
-    qc.s(q[3])
-    qc.s(q[4])
-    qc.cx(q[0], q[1])
-    qc.cx(q[0], q[2])
-    qc.cx(q[0], q[3])
-    qc.cx(q[0], q[4])
-    qc.h(q[0])
-    qc.z(q[0])
+    amp = 0.25
+    plus = [
+        "00000",
+        "10010",
+        "01001",
+        "10100",
+        "01010",
+        "00101",
+    ]
+    minus = [
+        "11011",
+        "00110",
+        "11000",
+        "11101",
+        "00011",
+        "11110",
+        "01111",
+        "10001",
+        "01100",
+        "10111",
+    ]
+    # + at end already included
+    code0 = {b: amp for b in plus}
+    code0.update({b: -amp for b in minus})
+
+    plus1 = [
+        "11111",
+        "01101",
+        "10110",
+        "01011",
+        "10101",
+        "11010",
+    ]
+    minus1 = [
+        "00100",
+        "11001",
+        "00111",
+        "00010",
+        "11100",
+        "00001",
+        "10000",
+        "01110",
+        "10011",
+        "01000",
+    ]
+    code1 = {b: amp for b in plus1}
+    code1.update({b: -amp for b in minus1})
+
+    def vec_from_dict(d):
+        vec = [0j] * 32
+        for b, a in d.items():
+            vec[int(b, 2)] = a
+        return vec
+
+    v0 = vec_from_dict(code0)
+    v1 = vec_from_dict(code1)
+    mat = np.array([v0, v1], dtype=complex).T  # shape (32,2)
+    iso = Isometry(mat, 0, 0)
+    qc = QuantumCircuit(data, name="enc_five_qubit")
+    qc.append(iso, data)
     return qc
 
 
 def _encoder_steane(data: QuantumRegister) -> QuantumCircuit:
     """
-    Steane [[7,1,3]] encoder (CSS) consistent with stabilizers:
-    X: IIIXXXX, IXXIIXX, XIXIXIX
-    Z: IIIZZZZ, IZZIIZZ, ZIZIZIZ
-    Source: CSS construction from Hamming (7,4) with proper logicals.
+    Steane [[7,1,3]] encoder via isometry to canonical codewords:
+    |0_L> = 1/sqrt(8)(0000000 + 1010101 + 0110011 + 1100110 + 0001111 + 1011010 + 0111100 + 1101001)
+    |1_L> = X⊗7 |0_L>
     """
-    q = data
-    qc = QuantumCircuit(q, name="enc_steane")
-    # Prepare |0_L>; logical |1_L> obtained by X on any data qubit (commutes with stabilizers)
-    qc.h(q[0])
-    qc.h(q[1])
-    qc.h(q[2])
-    qc.cx(q[0], q[3])
-    qc.cx(q[1], q[3])
-    qc.cx(q[0], q[4])
-    qc.cx(q[2], q[4])
-    qc.cx(q[1], q[5])
-    qc.cx(q[2], q[5])
-    qc.cx(q[0], q[6])
-    qc.cx(q[1], q[6])
-    qc.cx(q[2], q[6])
+    amp = 1 / math.sqrt(8)
+    code0_bits = [
+        "0000000",
+        "1010101",
+        "0110011",
+        "1100110",
+        "0001111",
+        "1011010",
+        "0111100",
+        "1101001",
+    ]
+    code1_bits = [
+        "1111111",
+        "0101010",
+        "1001100",
+        "0011001",
+        "1110000",
+        "0100101",
+        "1000011",
+        "0010110",
+    ]
+
+    def vec(bits_list):
+        vec = [0j] * 128
+        for b in bits_list:
+            vec[int(b, 2)] = amp
+        return vec
+
+    v0 = vec(code0_bits)
+    v1 = vec(code1_bits)
+    mat = np.array([v0, v1], dtype=complex).T  # shape (128,2)
+    iso = Isometry(mat, 0, 0)
+    qc = QuantumCircuit(data, name="enc_steane")
+    qc.append(iso, data)
     return qc
 
 
@@ -184,13 +243,16 @@ def build_code_circuit(
     initial: str = "+",
     rand: Tuple[complex, complex] | None = None,
     do_syndrome: bool = True,
+    save_logical: bool = True,
+    include_decode: bool = True,
 ) -> Tuple[QuantumCircuit, Statevector]:
     code = code.lower()
     if code == "baseline":
         data = QuantumRegister(1, "q")
         qc = QuantumCircuit(data, name="baseline")
         target = _prepare_initial(qc, data[0], initial, rand)
-        qc.save_density_matrix([data[0]], label="rho_logical")
+        if save_logical:
+            qc.save_density_matrix([data[0]], label="rho_logical")
         return qc, target
 
     if code == "bit_flip":
@@ -203,9 +265,6 @@ def build_code_circuit(
         stabilizers = ["XZZXI", "IXZZX", "XIXZZ", "ZXIXZ"]
         encoder = _encoder_five_qubit
     elif code == "steane":
-        # Standard Steane [[7,1,3]] stabilizer generators:
-        # X-type: IIIXXXX, IXXIIXX, XIXIXIX
-        # Z-type: IIIZZZZ, IZZIIZZ, ZIZIZIZ
         stabilizers = ["IIIXXXX", "IXXIIXX", "XIXIXIX", "IIIZZZZ", "IZZIIZZ", "ZIZIZIZ"]
         encoder = _encoder_steane
     else:
@@ -225,8 +284,10 @@ def build_code_circuit(
         correction_map = _auto_correction_map(stabilizers)
         _apply_corrections(qc, data, syn, correction_map)
 
-    qc.compose(enc.inverse(), qubits=data, inplace=True)
-    qc.save_density_matrix([data[0]], label="rho_logical")
+    if include_decode:
+        qc.compose(enc.inverse(), qubits=data, inplace=True)
+        if save_logical:
+            qc.save_density_matrix([data[0]], label="rho_logical")
     return qc, target
 
 
