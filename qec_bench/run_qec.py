@@ -47,7 +47,6 @@ def run_once(
     )
     backend = AerSimulator(method="density_matrix")
 
-    # Use higher optimization to reduce circuit depth; barriers protect noise placement
     qc = transpile(qc, backend=backend, optimization_level=3)
 
     if not verbose:
@@ -58,7 +57,6 @@ def run_once(
             rho = DensityMatrix(rho)
         return state_fidelity(rho, target, validate=False)
 
-    # Verbose path: run one shot at a time, log progress
     acc_rho = None
     for s in range(1, shots + 1):
         job = backend.run(qc, shots=1, seed_simulator=seed)
@@ -177,11 +175,9 @@ def sweep_ps(
 
 
 if __name__ == "__main__":
-    # Quick example
     # fid = run_once(code="bit_flip", initial="+", noise="depolarizing", p=0.05)
     # print(f"bit_flip, depolarizing p=0.05 -> fidelity {fid:.4f}")
 
-    # Multi-p sweep (clean values between 0 and 1)
     ps = [0.2, 0.4, 0.6, 0.8]
     sweep_ps(ps=ps, out_csv="results_multi_p.csv", seed=1234, shots=10)
 

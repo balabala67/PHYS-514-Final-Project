@@ -9,7 +9,6 @@ import sys
 
 from qiskit.quantum_info import Statevector, partial_trace
 
-# Ensure parent is on sys.path when running from tests/ directory
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from qec_codes import build_code_circuit
@@ -24,7 +23,7 @@ def dump_ket(prefix: str, sv: Statevector, thresh: float = 1e-10):
 
 def main():
     codes = ["baseline", "bit_flip", "phase_flip", "five_qubit", "steane"]
-    # Fixed clean amplitudes (real) for |ψ> = a|0> + b|1>, with a^2 + b^2 = 1
+
     rand_state = (0.6, 0.8)
 
     for code in codes:

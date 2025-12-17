@@ -1,7 +1,4 @@
-"""
-Noise model helpers (separate file so we can vary channels independently).
-Currently supports identity and depolarizing; easy to extend with dephasing/amp damping.
-"""
+
 
 from __future__ import annotations
 
