@@ -10,7 +10,8 @@ from typing import Dict, List, Tuple
 
 import numpy as np
 from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister
-from qiskit.circuit.library import Isometry
+from qiskit.circuit import Instruction
+from qiskit.circuit.library import UnitaryGate
 from qiskit.quantum_info import Pauli, Statevector
 
 
@@ -127,10 +128,36 @@ def _encoder_phase_flip(data: QuantumRegister) -> QuantumCircuit:
     return qc
 
 
+def _extend_to_unitary(v0: np.ndarray, v1: np.ndarray) -> np.ndarray:
+    """Extend two orthonormal vectors to a full unitary matrix by Gram-Schmidt."""
+    n = v0.shape[0]
+    cols: List[np.ndarray] = []
+    for v in (v0, v1):
+        v = v.astype(complex)
+        for c in cols:
+            v = v - np.vdot(c, v) * c
+        norm = np.linalg.norm(v)
+        if norm < 1e-12:
+            raise ValueError("Input vectors must be linearly independent.")
+        cols.append(v / norm)
+    for i in range(n):
+        e = np.zeros(n, dtype=complex)
+        e[i] = 1.0
+        for c in cols:
+            e = e - np.vdot(c, e) * c
+        norm = np.linalg.norm(e)
+        if norm < 1e-12:
+            continue
+        cols.append(e / norm)
+        if len(cols) == n:
+            break
+    return np.column_stack(cols)
+
+
 def _encoder_five_qubit(data: QuantumRegister) -> QuantumCircuit:
     """
-    Canonical [[5,1,3]] perfect code via isometry from |0>,|1> to 5-qubit codewords
-    matching the standard real ±1/4 amplitudes.
+    Canonical [[5,1,3]] perfect code, now promoted to a full unitary so the
+    inverse is a proper decoder under noise.
     """
     amp = 0.25
     plus = [
@@ -153,7 +180,6 @@ def _encoder_five_qubit(data: QuantumRegister) -> QuantumCircuit:
         "01100",
         "10111",
     ]
-    # + at end already included
     code0 = {b: amp for b in plus}
     code0.update({b: -amp for b in minus})
 
@@ -181,25 +207,24 @@ def _encoder_five_qubit(data: QuantumRegister) -> QuantumCircuit:
     code1.update({b: -amp for b in minus1})
 
     def vec_from_dict(d):
-        vec = [0j] * 32
+        vec = np.zeros(32, dtype=complex)
         for b, a in d.items():
             vec[int(b, 2)] = a
         return vec
 
     v0 = vec_from_dict(code0)
     v1 = vec_from_dict(code1)
-    mat = np.array([v0, v1], dtype=complex).T  # shape (32,2)
-    iso = Isometry(mat, 0, 0)
+    U = _extend_to_unitary(v0, v1)
+    gate = UnitaryGate(U, label="enc_five_qubit")
     qc = QuantumCircuit(data, name="enc_five_qubit")
-    qc.append(iso, data)
+    qc.append(gate, data)
     return qc
 
 
 def _encoder_steane(data: QuantumRegister) -> QuantumCircuit:
     """
-    Steane [[7,1,3]] encoder via isometry to canonical codewords:
-    |0_L> = 1/sqrt(8)(0000000 + 1010101 + 0110011 + 1100110 + 0001111 + 1011010 + 0111100 + 1101001)
-    |1_L> = X⊗7 |0_L>
+    Steane [[7,1,3]] canonical code, lifted to a full unitary so decode is the
+    exact inverse even under noise.
     """
     amp = 1 / math.sqrt(8)
     code0_bits = [
@@ -224,17 +249,17 @@ def _encoder_steane(data: QuantumRegister) -> QuantumCircuit:
     ]
 
     def vec(bits_list):
-        vec = [0j] * 128
+        v = np.zeros(128, dtype=complex)
         for b in bits_list:
-            vec[int(b, 2)] = amp
-        return vec
+            v[int(b, 2)] = amp
+        return v
 
     v0 = vec(code0_bits)
     v1 = vec(code1_bits)
-    mat = np.array([v0, v1], dtype=complex).T  # shape (128,2)
-    iso = Isometry(mat, 0, 0)
+    U = _extend_to_unitary(v0, v1)
+    gate = UnitaryGate(U, label="enc_steane")
     qc = QuantumCircuit(data, name="enc_steane")
-    qc.append(iso, data)
+    qc.append(gate, data)
     return qc
 
 
@@ -245,12 +270,16 @@ def build_code_circuit(
     do_syndrome: bool = True,
     save_logical: bool = True,
     include_decode: bool = True,
+    noise_inst: Instruction | None = None,
 ) -> Tuple[QuantumCircuit, Statevector]:
     code = code.lower()
     if code == "baseline":
         data = QuantumRegister(1, "q")
         qc = QuantumCircuit(data, name="baseline")
         target = _prepare_initial(qc, data[0], initial, rand)
+        # Optional single application of noise
+        if noise_inst is not None:
+            qc.append(noise_inst, [data[0]])
         if save_logical:
             qc.save_density_matrix([data[0]], label="rho_logical")
         return qc, target
@@ -278,6 +307,13 @@ def build_code_circuit(
 
     enc = encoder(data)
     qc.compose(enc, qubits=data, inplace=True)
+
+    # Optional single application of a noise channel to each data qubit (post-encode)
+    if noise_inst is not None:
+        qc.barrier(data)
+        for dq in data:
+            qc.append(noise_inst, [dq])
+        qc.barrier(data)
 
     if do_syndrome:
         syn = _measure_stabilizers(qc, data, stabilizers)

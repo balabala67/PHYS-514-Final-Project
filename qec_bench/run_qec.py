@@ -10,11 +10,12 @@ import math
 import random
 from typing import Tuple
 
+from qiskit import transpile
 from qiskit.quantum_info import DensityMatrix, state_fidelity
 from qiskit_aer import AerSimulator
 
-from circuits import build_code_circuit
-from noise_models import build_noise
+from qec_codes import build_code_circuit
+from noise_models import build_channel_instruction, build_noise
 
 
 def _random_state(rng: random.Random) -> Tuple[complex, complex]:
@@ -36,22 +37,31 @@ def run_once(
     verbose: bool = False,
 ) -> float:
     do_syndrome = not (noise == "identity" or p == 0.0)
-    qc, target = build_code_circuit(code, initial, rand_state, do_syndrome=do_syndrome)
+    noise_inst = build_channel_instruction(noise, p)
+    qc, target = build_code_circuit(
+        code,
+        initial,
+        rand_state,
+        do_syndrome=do_syndrome,
+        noise_inst=noise_inst,
+    )
     backend = AerSimulator(method="density_matrix")
-    noise_model = build_noise(noise, p)
+
+    # Use higher optimization to reduce circuit depth; barriers protect noise placement
+    qc = transpile(qc, backend=backend, optimization_level=3)
 
     if not verbose:
-        job = backend.run(qc, noise_model=noise_model, shots=shots, seed_simulator=seed)
+        job = backend.run(qc, shots=shots, seed_simulator=seed)
         result = job.result()
         rho = result.data(0)["rho_logical"]
         if not isinstance(rho, DensityMatrix):
             rho = DensityMatrix(rho)
-        return state_fidelity(rho, target)
+        return state_fidelity(rho, target, validate=False)
 
     # Verbose path: run one shot at a time, log progress
     acc_rho = None
     for s in range(1, shots + 1):
-        job = backend.run(qc, noise_model=noise_model, shots=1, seed_simulator=seed)
+        job = backend.run(qc, shots=1, seed_simulator=seed)
         result = job.result()
         rho = result.data(0)["rho_logical"]
         if not isinstance(rho, DensityMatrix):
@@ -59,7 +69,7 @@ def run_once(
         weight = 1.0 / shots
         acc_rho = rho * weight if acc_rho is None else acc_rho + rho * weight
         print(f"    shot {s}/{shots} for code={code}, init={initial}, noise={noise}")
-    return state_fidelity(acc_rho, target)
+    return state_fidelity(acc_rho, target, validate=False)
 
 
 def sweep(out_csv: str = "results.csv", p: float = 0.05, seed: int = 1234, shots: int = 10):
@@ -68,7 +78,8 @@ def sweep(out_csv: str = "results.csv", p: float = 0.05, seed: int = 1234, shots
 
     codes = ["baseline", "bit_flip", "phase_flip", "five_qubit", "steane"]
     inits = ["0", "1", "+", "-", "rand"]
-    noises = ["identity", "depolarizing", "dephasing", "amp_damping"]
+    noises = ["bit_flip", "phase_flip", "depolarizing", "amp_damping"]
+    heavy_codes = {"five_qubit", "steane"}
 
     rows = []
     total = len(codes) * len(inits) * len(noises)
@@ -78,7 +89,7 @@ def sweep(out_csv: str = "results.csv", p: float = 0.05, seed: int = 1234, shots
             for noise in noises:
                 done += 1
                 this_shots = shots if done <= 80 else shots
-                verbose = done > total - 20  # last 20 configs: log each shot
+                verbose = (code in heavy_codes) or (done > total - 20)
                 fid = run_once(
                     code=code,
                     initial=init,
@@ -118,7 +129,8 @@ def sweep_ps(
 
     codes = ["baseline", "bit_flip", "phase_flip", "five_qubit", "steane"]
     inits = ["0", "1", "+", "-", "rand"]
-    noises = ["identity", "depolarizing", "dephasing", "amp_damping"]
+    noises = ["bit_flip", "phase_flip", "depolarizing", "amp_damping"]
+    heavy_codes = {"five_qubit", "steane"}
 
     total = len(ps) * len(codes) * len(inits) * len(noises)
     rows = []
@@ -130,7 +142,9 @@ def sweep_ps(
                 for noise in noises:
                     done += 1
                     done_global += 1
-                    this_shots = shots if done <= 80 else shots
+                    # Steane: force 1 shot for speed; otherwise use default
+                    this_shots = 1 if code == "steane" else shots
+                    verbose = code in heavy_codes
                     fid = run_once(
                         code=code,
                         initial=init,
@@ -139,7 +153,7 @@ def sweep_ps(
                         shots=this_shots,
                         seed=seed,
                         rand_state=rand_ab if init == "rand" else None,
-                        verbose=False,
+                        verbose=verbose,
                     )
                     print(
                         f"[{done_global}/{total}] p={p:.3f} code={code:10s} init={init:4s} noise={noise:12s} "
@@ -168,7 +182,7 @@ if __name__ == "__main__":
     # print(f"bit_flip, depolarizing p=0.05 -> fidelity {fid:.4f}")
 
     # Multi-p sweep (clean values between 0 and 1)
-    ps = [0.0, 0.25, 0.5, 0.75, 1.0]
+    ps = [0.2, 0.4, 0.6, 0.8]
     sweep_ps(ps=ps, out_csv="results_multi_p.csv", seed=1234, shots=10)
 
 

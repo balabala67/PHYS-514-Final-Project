@@ -6,7 +6,12 @@ from __future__ import annotations
 
 from qiskit.quantum_info import Statevector, state_fidelity, partial_trace
 
-from circuits import build_code_circuit
+import os
+import sys
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+from qec_codes import build_code_circuit
 
 
 def main():

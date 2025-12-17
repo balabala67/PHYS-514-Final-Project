@@ -4,9 +4,15 @@ No noise, no syndrome. Prints amplitudes and writes out to text files for inspec
 """
 from __future__ import annotations
 
+import os
+import sys
+
 from qiskit.quantum_info import Statevector, partial_trace
 
-from circuits import build_code_circuit
+# Ensure parent is on sys.path when running from tests/ directory
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+from qec_codes import build_code_circuit
 
 
 def dump_ket(prefix: str, sv: Statevector, thresh: float = 1e-10):
