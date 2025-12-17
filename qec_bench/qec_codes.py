@@ -98,7 +98,8 @@ def _apply_corrections(qc: QuantumCircuit, data: QuantumRegister, syn: Classical
     if syn is None:
         return
     for syn_bits, (gate_label, idx) in correction_map.items():
-        mask = int(syn_bits, 2)
+        # Reverse because measurement bitstrings are little-endian in get_counts
+        mask = int(syn_bits[::-1], 2)
         gate_fn = getattr(qc, gate_label, None)
         if gate_fn is None:
             continue
